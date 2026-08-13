@@ -8,7 +8,9 @@ import androidx.lifecycle.viewModelScope
 import com.quyetbkhoa.phonebridge.PhoneBridgeApplication
 import com.quyetbkhoa.phonebridge.model.CommandResult
 import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -31,6 +33,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val lastResult: StateFlow<CommandResult?> = _lastResult.asStateFlow()
     private val _running = MutableStateFlow(false)
     val running: StateFlow<Boolean> = _running.asStateFlow()
+    private val _longRunning = MutableStateFlow(false)
+    val longRunning: StateFlow<Boolean> = _longRunning.asStateFlow()
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
     private var commandJob: Job? = null
@@ -53,13 +57,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (command.isBlank() || _running.value) return
         commandJob = viewModelScope.launch {
             _running.value = true
+            _longRunning.value = false
             _lastResult.value = null
+            val hintJob = launch {
+                delay(LONG_RUNNING_HINT_MS)
+                _longRunning.value = true
+            }
             try {
-                _lastResult.value = graph.commandExecutor.execute(command)
+                _lastResult.value = graph.commandExecutor.execute(command) { progress ->
+                    _lastResult.value = progress
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Throwable) {
                 _lastResult.value = CommandResult("", error.message ?: "Command failed", null)
             } finally {
+                hintJob.cancel()
                 _running.value = false
+                _longRunning.value = false
             }
         }
     }
@@ -68,6 +83,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         commandJob?.cancel()
         graph.usbController.stopCommand()
         _running.value = false
+        _longRunning.value = false
         _message.value = "Command stopped; USB connection was closed."
     }
 
@@ -75,12 +91,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_running.value) return
         commandJob = viewModelScope.launch {
             _running.value = true
+            _longRunning.value = false
+            _lastResult.value = null
+            val hintJob = launch {
+                delay(LONG_RUNNING_HINT_MS)
+                _longRunning.value = true
+            }
             try {
-                _lastResult.value = graph.shizukuStarter.start()
+                _lastResult.value = graph.shizukuStarter.start { progress ->
+                    _lastResult.value = progress
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Throwable) {
                 _lastResult.value = CommandResult("", error.message ?: "Unable to start Shizuku", null)
             } finally {
+                hintJob.cancel()
                 _running.value = false
+                _longRunning.value = false
             }
         }
     }
@@ -142,5 +170,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val MAX_SCRIPT_CHARS = 2 * 1024 * 1024
+        private const val LONG_RUNNING_HINT_MS = 8_000L
     }
 }

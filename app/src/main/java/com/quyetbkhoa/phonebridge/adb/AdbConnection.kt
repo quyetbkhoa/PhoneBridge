@@ -94,16 +94,19 @@ class AdbConnection(
         }
     }
 
-    suspend fun execute(script: String): CommandResult = commandMutex.withLock {
+    suspend fun execute(
+        script: String,
+        onProgress: (CommandResult) -> Unit = {}
+    ): CommandResult = commandMutex.withLock {
         require(script.isNotBlank()) { "Command is empty" }
         check(connected) { "ADB is not connected" }
         withContext(Dispatchers.IO) {
             val startedAt = System.currentTimeMillis()
             val result = try {
-                executeShellV2(script)
+                executeShellV2(script, startedAt, onProgress)
             } catch (rejected: ServiceRejectedException) {
                 log.add("shell,v2 unavailable; falling back to legacy shell")
-                executeLegacyShell(script)
+                executeLegacyShell(script, startedAt, onProgress)
             }
             result.copy(startedAt = startedAt, durationMs = System.currentTimeMillis() - startedAt)
         }
@@ -144,7 +147,11 @@ class AdbConnection(
         )
     }
 
-    private fun executeShellV2(script: String): CommandResult {
+    private fun executeShellV2(
+        script: String,
+        startedAt: Long,
+        onProgress: (CommandResult) -> Unit
+    ): CommandResult {
         val stream = openStream("shell,v2,raw:sh")
         log.add("OPEN shell,v2")
         val parser = ShellV2Parser()
@@ -153,12 +160,33 @@ class AdbConnection(
         var exitCode: Int? = null
 
         fun accept(packet: AdbPacket) {
+            var changed = false
             for (frame in parser.feed(packet.payload)) {
                 when (frame.id) {
-                    ShellV2Parser.STDOUT -> stdout.write(frame.payload)
-                    ShellV2Parser.STDERR -> stderr.write(frame.payload)
-                    ShellV2Parser.EXIT -> exitCode = frame.payload.firstOrNull()?.toInt()?.and(0xff)
+                    ShellV2Parser.STDOUT -> {
+                        stdout.write(frame.payload)
+                        changed = true
+                    }
+                    ShellV2Parser.STDERR -> {
+                        stderr.write(frame.payload)
+                        changed = true
+                    }
+                    ShellV2Parser.EXIT -> {
+                        exitCode = frame.payload.firstOrNull()?.toInt()?.and(0xff)
+                        changed = true
+                    }
                 }
+            }
+            if (changed) {
+                onProgress(
+                    CommandResult(
+                        stdout = stdout.toString(Charsets.UTF_8.name()),
+                        stderr = stderr.toString(Charsets.UTF_8.name()),
+                        exitCode = exitCode,
+                        startedAt = startedAt,
+                        durationMs = System.currentTimeMillis() - startedAt
+                    )
+                )
             }
         }
 
@@ -176,11 +204,26 @@ class AdbConnection(
         return CommandResult(stdout.toString(Charsets.UTF_8.name()), stderr.toString(Charsets.UTF_8.name()), exitCode)
     }
 
-    private fun executeLegacyShell(script: String): CommandResult {
+    private fun executeLegacyShell(
+        script: String,
+        startedAt: Long,
+        onProgress: (CommandResult) -> Unit
+    ): CommandResult {
         val stream = openStream("shell:${ShellScripts.legacyCommand(script)}")
         log.add("OPEN legacy shell")
         val stdout = ByteArrayOutputStream()
-        readUntilClosed(stream) { stdout.write(it.payload) }
+        readUntilClosed(stream) {
+            stdout.write(it.payload)
+            onProgress(
+                CommandResult(
+                    stdout = stdout.toString(Charsets.UTF_8.name()),
+                    stderr = "",
+                    exitCode = null,
+                    startedAt = startedAt,
+                    durationMs = System.currentTimeMillis() - startedAt
+                )
+            )
+        }
         return CommandResult(stdout.toString(Charsets.UTF_8.name()), "", null)
     }
 

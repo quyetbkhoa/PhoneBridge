@@ -176,7 +176,7 @@ private fun HomeScreen(viewModel: MainViewModel) {
                 ) { Text(preset.name) }
             }
         }
-        result?.let { value -> item { CommandOutput(value) } }
+        result?.let { value -> item { CommandOutput(value, running) } }
     }
 }
 
@@ -215,6 +215,7 @@ private fun TerminalScreen(viewModel: MainViewModel) {
     val command by viewModel.terminalText.collectAsState()
     val result by viewModel.lastResult.collectAsState()
     val running by viewModel.running.collectAsState()
+    val longRunning by viewModel.longRunning.collectAsState()
     var saveMode by remember { mutableStateOf<SaveMode?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(viewModel::importScript)
@@ -252,8 +253,20 @@ private fun TerminalScreen(viewModel: MainViewModel) {
                 }
             }
         }
-        if (running) item { CircularProgressIndicator() }
-        result?.let { value -> item { CommandOutput(value) } }
+        if (running) {
+            item { CircularProgressIndicator() }
+            if (longRunning) {
+                item {
+                    Card(Modifier.fillMaxWidth()) {
+                        Text(
+                            "The remote command is still running. Long-lived scripts may never exit on their own. Output is shown below as it arrives; tap STOP to close the ADB connection.",
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                }
+            }
+        }
+        result?.let { value -> item { CommandOutput(value, running) } }
     }
     saveMode?.let { mode ->
         NameDialog(
@@ -270,11 +283,14 @@ private fun TerminalScreen(viewModel: MainViewModel) {
 private enum class SaveMode { Save, RunAndSave }
 
 @Composable
-private fun CommandOutput(result: CommandResult) {
+private fun CommandOutput(result: CommandResult, running: Boolean) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Result", style = MaterialTheme.typography.titleMedium)
-            Text("Exit: ${result.exitCode?.toString() ?: "unavailable"} · ${result.durationMs} ms")
+            Text(
+                if (running) "Running · ${result.durationMs} ms"
+                else "Exit: ${result.exitCode?.toString() ?: "unavailable"} · ${result.durationMs} ms"
+            )
             if (result.stdout.isNotEmpty()) {
                 Text("stdout", fontWeight = FontWeight.Bold)
                 Text(result.stdout, fontFamily = FontFamily.Monospace)

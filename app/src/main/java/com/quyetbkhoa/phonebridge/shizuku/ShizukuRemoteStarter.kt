@@ -5,5 +5,6 @@ import com.quyetbkhoa.phonebridge.data.ShizukuCommands
 import com.quyetbkhoa.phonebridge.model.CommandResult
 
 class ShizukuRemoteStarter(private val commandExecutor: CommandExecutor) {
-    suspend fun start(): CommandResult = commandExecutor.execute(ShizukuCommands.START)
+    suspend fun start(onProgress: (CommandResult) -> Unit = {}): CommandResult =
+        commandExecutor.execute(ShizukuCommands.START, onProgress)
 }

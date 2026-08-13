@@ -4,6 +4,12 @@ All notable PhoneBridge changes are documented here. Versions follow Semantic Ve
 
 ## [Unreleased]
 
+### Fixed
+
+- Stream remote stdout/stderr into the Terminal while a command is still running.
+- Explain long-lived shell sessions after eight seconds instead of showing an unexplained endless spinner.
+- Preserve a clean cancellation result when STOP closes the USB transport.
+
 ### Added
 
 - Android USB Host discovery for ADB interfaces and bulk endpoints.
